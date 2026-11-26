@@ -442,6 +442,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(split_rules_test tests/program/split_rules_test.cpp)
   target_include_directories(split_rules_test PRIVATE include)
   add_test(NAME split_rules_test COMMAND split_rules_test)
+  # the EP placement rules (ep/llm2-draft): ranked list in, card owner out, checked against hand-computed ratios
+  add_executable(ep_rules_test tests/program/ep_rules_test.cpp)
+  target_include_directories(ep_rules_test PRIVATE include)
+  add_test(NAME ep_rules_test COMMAND ep_rules_test)
 
   # #3797: the out-of-memory report at start (per card free/total, the largest other programs): the text is a pure
   # function; the driver query (NVML, loaded at run time) is only checked to be safe to call. No GPU needed.
