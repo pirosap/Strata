@@ -222,3 +222,20 @@ printf format specifiers in the new log lines.
 errors — an EP number without a same-day stock number is not a result. Then Track A A/B, then Track B.
 Keep every change opt-in; if an arm is not faster on this rig, the correct outcome is to record that
 and leave the default path alone.
+
+## Upstream tracking
+
+This branch is based on the fork's `main` at fork time (c234774: tag v0.2.22 plus one upstream
+packaging commit). That is deliberate — upstream releases land on `main`, so the maintenance loop is:
+
+1. Sync the fork's `main` with Niko1221/Strata (GitHub's "Sync fork", or fetch + merge in a clone).
+2. Merge `main` into `ep/llm2-draft`. Merge, not rebase: the branch is shared with the rig-side
+   agents, and its history is the audit trail for the measurements.
+3. Keep conflicts inside the EP-gated code. The draft is additive and flag-gated, so conflicts
+   should stay confined to `ink_runner.cuh`, `generate.cpp`, and the two new headers; a conflict
+   anywhere else means an upstream change needs reading before the merge proceeds.
+4. Re-run measurement plan step 1 (same-day stock baseline) before quoting any EP number on the
+   new base.
+
+Before each upstream merge, tag the branch state (`ep-llm2-pre-<version>`) so a bad merge can be
+diffed against the last measured state.
