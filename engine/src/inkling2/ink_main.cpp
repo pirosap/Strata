@@ -944,6 +944,8 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--ep-split") {
             cfg.bopts.ep_split = std::atof(next().c_str());
+        } else if (a == "--ep-prior-placement") {
+            cfg.bopts.ep_prior_placement = true;
         } else if (a == "--layer-split") {
             cfg.bopts.layer_split = next();
         } else if (a == "--threads") {
@@ -977,7 +979,7 @@ int main(int argc, char** argv) {
                    "  --info PATH [--vision VISION] [--dspark PATH]\n"
                    "  --export-tokenizer PATH OUT_DIR\n"
                    "  --selfcheck [--native PATH] [--verify-hash] [--cpu] [--gpu N] [--gpus 1|2] [--kv auto|fp16|fp8|k8v8|k8v4]\n"
-                   "  --bench --native PATH [--parallel 1..64] [--gpu N] [--gpus 1..4] [--layer-split auto|K1,K2,...] [--ep-split F] [--vram-experts-gb F] [--ram-experts-gb F] [--ssd-experts] [--vram-reserve-mib N] [--cpu-threads N] [--kv auto|fp16|fp8|k8v8|k8v4] [--kv-offload auto|on|off] [--prompt-len N] [--gen N]\n"
+                   "  --bench --native PATH [--parallel 1..64] [--gpu N] [--gpus 1..4] [--layer-split auto|K1,K2,...] [--ep-split F] [--ep-prior-placement] [--vram-experts-gb F] [--ram-experts-gb F] [--ssd-experts] [--vram-reserve-mib N] [--cpu-threads N] [--kv auto|fp16|fp8|k8v8|k8v4] [--kv-offload auto|on|off] [--prompt-len N] [--gen N]\n"
                    "  --kld-eval REF.bin --native PATH\n"
                    "  --serve --native PATH [--vision VISION] [--dspark PATH] [--max-context N] [--parallel 1..64] [--gpu N] [--gpus 1..4] [--layer-split auto|K1,K2,...] [--kv auto|fp16|fp8|k8v8|k8v4] [--kv-offload auto|on|off] [--draft auto|dspark|off]\n",
                    INKLING_VERSION);
@@ -992,6 +994,9 @@ int main(int argc, char** argv) {
     if (const char* ep_env = std::getenv("IK2_EP_SPLIT"); ep_env && *ep_env) {
         double v = std::atof(ep_env);
         if (v > 0.0 && v < 1.0) cfg.bopts.ep_split = v;
+    }
+    if (const char* pp_env = std::getenv("IK2_EP_PRIOR_PLACEMENT"); pp_env && *pp_env && std::atoi(pp_env) != 0) {
+        cfg.bopts.ep_prior_placement = true;
     }
     if (cfg.bopts.gpus == 1 && cfg.bopts.gpu_ids.empty()) {
         if (const char* g_env = std::getenv("IK2_GPUS"); g_env && *g_env) {

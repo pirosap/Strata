@@ -150,6 +150,10 @@ public:
             all_gpus.push_back(gpu_id_);
         }
         const int peer_gpu_id = (all_gpus.size() >= 2) ? all_gpus[1] : -1;
+        if (opts.ep_prior_placement && all_gpus.size() >= 2) {
+            std::fprintf(stderr, "[InkCUDA] EP prior placement: expert pair is GPU %d + GPU %d (frequency prior over the combined VRAM, ep_rules::assign_cards)\n",
+                         all_gpus[0], all_gpus[1]);
+        }
 
         ce = cudaSetDevice(gpu_id_);
         if (ce != cudaSuccess) {
@@ -228,7 +232,7 @@ public:
         if (!model_.load_from_model_file(mf, gpu_id_, peer_gpu_id, (float)opts.ep_split, build_screen, err,
                                          min_reserve_bytes, gguf_detail::gguf_dequant_row_f32, gguf_detail::gguf_row_bytes,
                                          opts.vram_experts_gb, opts.ram_experts_gb, opts.ssd_experts,
-                                         all_gpus, opts.layer_split, opts.threads)) {
+                                         all_gpus, opts.layer_split, opts.threads, opts.ep_prior_placement)) {
             return false;
         }
 

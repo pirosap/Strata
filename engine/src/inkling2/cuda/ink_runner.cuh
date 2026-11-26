@@ -14,6 +14,7 @@
 #include "strata/artifact/strata_reader.hpp"
 #include "strata/core/ink_kv_grow.hpp"
 #include "strata/core/ink_kv_reserve.hpp"
+#include "strata/program/ep_rules.hpp"
 
 #include <algorithm>
 #include <array>
@@ -222,6 +223,7 @@ struct InkCudaModel {
     bool ep2_active = false;
     bool ep2_p2p = false;
     float ep_split = 0.5f;
+    bool ep_prior_placement = false;   // ep-llm2 draft: cuda-ep2 card choice by frequency prior (ep_rules) instead of the expert-id stripe
     // Multi-GPU Pipeline Layer-Split (--layer-split auto | K1,K2,...) across 2..4 GPUs (0 duplicated KV/experts!)
     static constexpr int kMaxStages = 4;
     bool ls_active = false;
@@ -849,7 +851,8 @@ struct InkCudaModel {
         bool ssd_experts = false,
         const std::vector<int>& all_gpus = {},
         const std::string& layer_split_spec = "",
-        int cpu_threads = 0) {
+        int cpu_threads = 0,
+        bool ep_prior_placement_in = false) {
         // Fast zero-overhead path for single-GPU .strata v1.1!
         // The file's real kind decides, not the manifest's format string: a GGUF / safetensors file must never reach load() (the .strata reader).
         const bool is_strata_fmt = mf.is_native_strata();
@@ -882,6 +885,7 @@ struct InkCudaModel {
         stage_gpu[0] = primary_gpu;
         for (int il = 0; il < 24; ++il) layer_owner[il] = 0;
         ep_split = std::max(0.1f, std::min(0.9f, ep_split_in));
+        ep_prior_placement = ep_prior_placement_in;
 
         std::vector<int> gpu_cc(gpus.size(), 0);
         std::vector<size_t> gpu_vf(gpus.size(), 0), gpu_vt(gpus.size(), 0);
@@ -920,6 +924,10 @@ struct InkCudaModel {
             if (!force_ep2 && (explicit_ls || gpus.size() > 2 || mixed_cc || unequal_vram || prefer_ls_os)) {
                 ls_active = true;
             } else if (gpus.size() == 2) {
+                // TODO(ep-llm2, hardware phase): on the llm2 rig (2x CMP 90HX, PCIe Gen2 x16 per card) host-to-device
+                // measures ~6.3 GB/s against ~5.3 GB/s for card-to-card P2P, so bandwidth argues for the pinned bounce
+                // and only the probe's latency comparison can justify ep2_p2p.  A/B STRATA_CUDA_PEER_P2P=1 against
+                // STRATA_CUDA_PEER_PINNED=1 on the rig before trusting either arm; do not force P2P here.
                 p2p01 = probe_p2p(gpus[0], gpus[1]);
                 INK_CK(cudaSetDevice(primary_gpu));
                 if (!force_ep2 && !p2p01) {
@@ -1420,9 +1428,26 @@ struct InkCudaModel {
             const size_t cap0 = std::min(all_fit_gpu ? bud0 : hyb_bud0, user_vram_cap);
             if (user_vram_cap < bud1) bud1 = user_vram_cap;
 
+            // ep-llm2 draft (--ep-prior-placement): the card preference comes from the frequency prior over the
+            // COMBINED budgets (ep_rules::assign_cards over the ranked load order), not from the expert-id stripe
+            // in want_peer.  prior_owner is indexed by di like target_tier (0 = GPU0, 1 = GPU1, -1 = neither: the
+            // fill loop below then falls through GPU0, GPU1, host in its usual cross-fill order).
+            std::vector<int32_t> prior_owner;
+            if (ep_prior_placement && ep2_active) {
+                std::vector<strata::program::ep_rules::ExpertRef> ranked;
+                ranked.reserve(order.size());
+                for (uint16_t di : order) {
+                    ranked.push_back({(int32_t) (di / man.c.n_experts), (int32_t) dir[di].expert_id, (int64_t) eff_bytes[di]});
+                }
+                const std::vector<int32_t> by_rank = strata::program::ep_rules::assign_cards(
+                    ranked, {(int64_t) cap0, (int64_t) bud1});
+                prior_owner.assign((size_t) n_total, -1);
+                for (size_t pos = 0; pos < order.size(); ++pos) prior_owner[order[pos]] = by_rank[pos];
+            }
+
             for (uint16_t di : order) {
                 const size_t eb = eff_bytes[di];
-                const bool pref_p = want_peer(dir[di].expert_id);
+                const bool pref_p = !prior_owner.empty() ? (prior_owner[di] == 1) : want_peer(dir[di].expert_id);
                 if (pref_p && u1 + eb <= bud1) {
                     target_tier[di] = 1; u1 += eb; ++n_peer_experts;
                 } else if (!pref_p && u0 + eb <= cap0) {
@@ -1460,6 +1485,11 @@ struct InkCudaModel {
                     }
                 }
             }
+        }
+
+        if (ep_prior_placement && ep2_active) {
+            std::fprintf(stderr, "[InkCUDA] EP placement (frequency prior over the combined VRAM): %lld experts on GPU0, %lld on GPU1, %lld on host\n",
+                         (long long) n_vram_experts, (long long) n_peer_experts, (long long) n_host_experts);
         }
 
         // Adaptive hot-expert tier (one GPU, experts partly in RAM): the card's expert bytes become a pool of slots that follows the router;

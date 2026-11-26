@@ -23,6 +23,7 @@ struct BackendOpts {
     int gpus = 1;                // 1..4 (--gpus 2 / --gpus 0,1 / --layer-split auto)
     std::vector<int> gpu_ids;    // optional explicit GPU ordinals (--gpus 0,1 / --devices 0,1 / IK2_GPUS)
     double ep_split = 0.5;       // GPU 1 expert share in (0, 1) (--ep-split / IK2_EP_SPLIT)
+    bool ep_prior_placement = false; // --ep-prior-placement / IK2_EP_PRIOR_PLACEMENT: with cuda-ep2, pick each card's experts by frequency prior over the COMBINED VRAM (strata::program::ep_rules::assign_cards) instead of the per-layer expert-id stripe
     std::string layer_split;     // "", "auto", or "K1,K2,..." (2..4 GPUs pipeline layer split, zero duplicated KV/experts!)
     int vram_reserve_mib = -1;   // >= 0 reserves N MiB free VRAM & activates hybrid offload (#6520)
     int cpu_threads = 0;         // > 0 activates CUDA-Graph mapped-memory doorbell NUMA CPU expert pool (#6520)
