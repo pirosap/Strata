@@ -21,8 +21,8 @@ int main() {
     CHECK(peer_share_prior(0, 100) == 1.0);
     CHECK(peer_share_prior(-5, 100) == 1.0);
     CHECK(peer_share_prior(100, -5) == 0.0);
-    CHECK(peer_share_prior(300, 100) == 0.75);
-    CHECK(peer_share_prior(100, 300) == 0.25);
+    CHECK(peer_share_prior(300, 100) == 0.25);   // the peer holds a quarter of the pair's room
+    CHECK(peer_share_prior(100, 300) == 0.75);
 
     // ---- assign_cards: empty input, empty answer
     {
