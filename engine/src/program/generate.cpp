@@ -69,6 +69,7 @@
 #include "strata/core/uma_cache.hpp"
 #include "strata/core/remote_experts.hpp"
 #include "strata/core/on_device.hpp"
+#include "strata/core/ep_peer.hpp"
 #include "strata/core/peer_experts.hpp"
 #include "strata/core/layer.hpp"
 #include "strata/core/kv_grow_rules.hpp"
@@ -922,6 +923,11 @@ struct Options {
     /// the prompt path's rows per layer the peer computes: -1 = half of chunk x top-k, 0 = the prompt path stays on
     /// the primary
     int64_t peer_prefill_rows = -1;
+    /// DRAFT (ep-llm2, docs/ep-llm2-design.md): --ep reads the --peer-device pair as a symmetric
+    /// expert-parallel pair: the profile's ranked experts are sharded over BOTH cards by frequency prior
+    /// (ep_rules::assign_cards) instead of the peer taking what the primary does not hold.  Default off;
+    /// without it every path is unchanged.  Needs --peer-device and inherits its mutual exclusions.
+    bool ep_mode = false;
     /// The PLE gather's prefetch, as an A/B arm.  The gather measured 2.10-2.61 ms/token because its sixteen
     /// row reads are sixteen SEPARATE page faults into a 26.8 GB mapping; see `ple_prefetch_enable`.
     bool no_ple_prefetch = false;
@@ -1431,6 +1437,8 @@ void usage() {
                  "  --peer-adapt-swaps N  peer cache swaps per adaptation step (default: --adapt-swaps)\n"
                  "  --peer-prefill-rows N  prompt rows per layer the peer computes (default half of chunk x top-k;\n"
                  "                       0 = the prompt path stays on the primary)\n"
+                 "  --ep                 DRAFT: symmetric expert parallel on the --peer-device pair\n"
+                 "                       (docs/ep-llm2-design.md).  Needs --peer-device.  Default off.\n"
                  "  --expert-cache-per-layer  R4.2g: give each layer its OWN slots instead of letting the first\n"
                  "                       position take all of them.  The default policy fills in arrival order\n"
                  "                       from one shared counter, so 256 slots went to ~26 layers of position 0\n"
@@ -4207,6 +4215,7 @@ int main(int argc, char** argv) {
         else if (a == "--peer-slots") o.peer_slots = std::atoll(next("--peer-slots"));
         else if (a == "--peer-adapt-swaps") o.peer_adapt_swaps = std::atoi(next("--peer-adapt-swaps"));
         else if (a == "--peer-prefill-rows") o.peer_prefill_rows = std::atoll(next("--peer-prefill-rows"));
+        else if (a == "--ep") o.ep_mode = true;
         else if (a == "--no-hit-poke") o.no_hit_poke = true;
         else if (a == "--expert-profile") o.expert_profile = next("--expert-profile");
         else if (a == "--expert-profile-save") o.expert_profile_save = next("--expert-profile-save");
@@ -5287,6 +5296,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "strata generate: --peer-device cannot be combined with %s\n",
                      !o.layer_split.empty() ? "--layer-split (use one or the other)"
                                             : "--expert-cache-device1..3 (the peer tier already caches experts there)");
+        return 2;
+    }
+    // DRAFT (ep-llm2): --ep is the peer tier read as a symmetric pair, so it names its second card through
+    // --peer-device and inherits the exclusions above.
+    if (o.ep_mode && o.peer_device < 1) {
+        std::fprintf(stderr, "strata generate: --ep needs --peer-device N (the pair's second card)\n");
         return 2;
     }
 
@@ -10225,6 +10240,18 @@ int main(int argc, char** argv) {
                              "%lld that is %lld of %lld on the GPUs\n", o.peer_device, (long long) peer.resident(), peer.gib(),
                      std::chrono::duration<double>(Clock::now() - tp0).count(), (long long) xcache.slots(),
                      (long long) (peer.resident() + xcache.slots()), (long long) (g.n_layers * g.n_expert));
+        if (o.ep_mode) {
+            // DRAFT (ep-llm2): build the EP sharding map from the residency the two fills actually produced
+            // and log it.  This is the seam for the hardware phase: PeerExperts::open above still fills "what
+            // the primary does not hold" in ranked order; making both fills follow build_ep_sharding_map (the
+            // frequency prior over the combined VRAM) is the next step, and it belongs with the measurements
+            // that show whether the prior beats the leftover fill on this rig.
+            const strata::core::EpShardingMap ep_map =
+                strata::core::map_from_residency(xcache, peer, g.n_layers, g.n_expert);
+            std::fprintf(stderr, "strata generate: --ep sharding map: %lld experts on the primary, %lld on GPU %d, %lld on the host tier\n",
+                         (long long) ep_map.resident_on(0), (long long) ep_map.resident_on(1), o.peer_device,
+                         (long long) ep_map.host_resident());
+        }
     }
 
     if (remote_opt && !remote_opt->init(err)) { std::fprintf(stderr, "strata generate: %s\n", err.c_str()); return 1; }
